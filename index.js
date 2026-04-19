@@ -43,15 +43,35 @@ const eventCommand = new SlashCommandBuilder()
   .setName('event-request')
   .setDescription('Start an event request');
 
+const dmCommand = new SlashCommandBuilder()
+  .setName('dm-user')
+  .setDescription('Send a DM to a user')
+  .addUserOption(option =>
+    option
+      .setName('user')
+      .setDescription('The user to DM')
+      .setRequired(true)
+  )
+  .addStringOption(option =>
+    option
+      .setName('message')
+      .setDescription('The message to send')
+      .setRequired(true)
+  );
+
 async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
   await rest.put(
     Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
-    { body: [qotdCommand.toJSON(), eventCommand.toJSON()] }
+    { body: [qotdCommand.toJSON(), eventCommand.toJSON(), dmCommand.toJSON()] }
   );
 
   console.log('Slash commands registered.');
+}
+
+function hasLeadershipRole(member) {
+  return member?.roles?.cache?.has(process.env.PR_LEADERSHIP_ROLE_ID);
 }
 
 function buildActiveButtons(requestId) {
@@ -167,6 +187,36 @@ function buildDecisionDmEmbed(title, result, reviewedById, fields, reason = null
   return embed;
 }
 
+function buildDmLogEmbed(senderId, targetId, message, success, errorText = null) {
+  const embed = new EmbedBuilder()
+    .setTitle('DM Command Log')
+    .addFields(
+      { name: 'Sent by', value: `<@${senderId}>`, inline: true },
+      { name: 'Target user', value: `<@${targetId}>`, inline: true },
+      { name: 'Status', value: success ? 'Sent' : 'Failed', inline: true },
+      { name: 'Message', value: message.length > 1024 ? `${message.slice(0, 1021)}...` : message }
+    )
+    .setTimestamp();
+
+  if (errorText) {
+    embed.addFields({
+      name: 'Error',
+      value: errorText.length > 1024 ? `${errorText.slice(0, 1021)}...` : errorText,
+    });
+  }
+
+  return embed;
+}
+
+async function sendDmLog(senderId, targetId, message, success, errorText = null) {
+  const logChannel = await client.channels.fetch(process.env.DM_LOG_CHANNEL_ID).catch(() => null);
+  if (!logChannel) return;
+
+  await logChannel.send({
+    embeds: [buildDmLogEmbed(senderId, targetId, message, success, errorText)],
+  }).catch(() => null);
+}
+
 async function editReviewMessage(requestData, embed) {
   const reviewChannel = await client.channels.fetch(requestData.reviewChannelId).catch(() => null);
   if (!reviewChannel) return;
@@ -187,6 +237,57 @@ client.once(Events.ClientReady, () => {
 client.on(Events.InteractionCreate, async interaction => {
   try {
     if (interaction.isChatInputCommand()) {
+      if (interaction.commandName === 'dm-user') {
+        if (!hasLeadershipRole(interaction.member)) {
+          return interaction.reply({
+            content: 'You are not allowed to use this command.',
+            flags: MessageFlags.Ephemeral,
+          });
+        }
+
+        const targetUser = interaction.options.getUser('user');
+        const message = interaction.options.getString('message');
+
+        if (targetUser.bot) {
+          return interaction.reply({
+            content: 'You cannot DM a bot with this command.',
+            flags: MessageFlags.Ephemeral,
+          });
+        }
+
+        const dmEmbed = new EmbedBuilder()
+          .setTitle('Message from Public Relations Leadership')
+          .setDescription(message)
+          .addFields(
+            { name: 'Sent by', value: `<@${interaction.user.id}>`, inline: true },
+            { name: 'Server', value: interaction.guild.name, inline: true }
+          )
+          .setTimestamp();
+
+        try {
+          await targetUser.send({ embeds: [dmEmbed] });
+          await sendDmLog(interaction.user.id, targetUser.id, message, true);
+
+          return interaction.reply({
+            content: `DM sent to <@${targetUser.id}>.`,
+            flags: MessageFlags.Ephemeral,
+          });
+        } catch (error) {
+          await sendDmLog(
+            interaction.user.id,
+            targetUser.id,
+            message,
+            false,
+            'Could not DM this user. Their DMs may be closed.'
+          );
+
+          return interaction.reply({
+            content: 'I could not DM that user. Their DMs may be closed.',
+            flags: MessageFlags.Ephemeral,
+          });
+        }
+      }
+
       if (interaction.commandName === 'qotd-request') {
         const question = interaction.options.getString('question');
         const date = interaction.options.getString('date');
@@ -305,10 +406,7 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     if (interaction.isButton()) {
-      const member = interaction.member;
-      const requiredRole = process.env.PR_LEADERSHIP_ROLE_ID;
-
-      if (!member.roles.cache.has(requiredRole)) {
+      if (!hasLeadershipRole(interaction.member)) {
         return interaction.reply({
           content: 'You are not allowed to review requests.',
           flags: MessageFlags.Ephemeral,
@@ -530,10 +628,7 @@ client.on(Events.InteractionCreate, async interaction => {
           });
         }
 
-        const member = interaction.member;
-        const requiredRole = process.env.PR_LEADERSHIP_ROLE_ID;
-
-        if (!member.roles.cache.has(requiredRole)) {
+        if (!hasLeadershipRole(interaction.member)) {
           return interaction.reply({
             content: 'You are not allowed to review requests.',
             flags: MessageFlags.Ephemeral,

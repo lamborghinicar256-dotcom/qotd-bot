@@ -15,10 +15,16 @@ const {
   TextInputStyle,
   StringSelectMenuBuilder,
   MessageFlags,
+  Partials,
+  ChannelType,
 } = require('discord.js');
-
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.MessageContent,
+  ],
+  partials: [Partials.Channel],
 });
 
 const requests = new Map();
@@ -233,7 +239,42 @@ async function editReviewMessage(requestData, embed) {
 client.once(Events.ClientReady, () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
+client.on(Events.MessageCreate, async message => {
+  try {
+    if (message.author.bot) return;
+    if (message.channel.type !== ChannelType.DM) return;
 
+    const responseChannel = await client.channels
+      .fetch(process.env.DM_RESPONSE_CHANNEL_ID)
+      .catch(() => null);
+
+    if (!responseChannel) return;
+
+    const responseEmbed = new EmbedBuilder()
+      .setTitle('DM Response Received')
+      .addFields(
+        { name: 'User', value: `<@${message.author.id}>`, inline: true },
+        { name: 'Username', value: message.author.tag, inline: true },
+        {
+          name: 'Message',
+          value: message.content?.trim() ? message.content : '*No text message provided*',
+        }
+      )
+      .setTimestamp();
+
+    if (message.attachments.size > 0) {
+      const attachmentList = message.attachments.map(attachment => attachment.url).join('\n');
+      responseEmbed.addFields({
+        name: 'Attachments',
+        value: attachmentList.length > 1024 ? `${attachmentList.slice(0, 1021)}...` : attachmentList,
+      });
+    }
+
+    await responseChannel.send({ embeds: [responseEmbed] });
+  } catch (error) {
+    console.error('DM response logging error:', error);
+  }
+});
 client.on(Events.InteractionCreate, async interaction => {
   try {
     if (interaction.isChatInputCommand()) {
@@ -255,14 +296,8 @@ client.on(Events.InteractionCreate, async interaction => {
           });
         }
 
-       try {
-  await targetUser.send(
-    `Message from Public Relations Leadership\n` +
-    `Sent by: <@${interaction.user.id}>\n` +
-    `Server: ${interaction.guild.name}\n\n` +
-    `${message}`
-  );
-
+try {
+  await targetUser.send(message);
   await sendDmLog(interaction.user.id, targetUser.id, message, true);
 
   return interaction.reply({

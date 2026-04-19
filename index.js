@@ -255,37 +255,34 @@ client.on(Events.InteractionCreate, async interaction => {
           });
         }
 
-        const dmEmbed = new EmbedBuilder()
-          .setTitle('Message from Public Relations Leadership')
-          .setDescription(message)
-          .addFields(
-            { name: 'Sent by', value: `<@${interaction.user.id}>`, inline: true },
-            { name: 'Server', value: interaction.guild.name, inline: true }
-          )
-          .setTimestamp();
+       try {
+  await targetUser.send(
+    `Message from Public Relations Leadership\n` +
+    `Sent by: <@${interaction.user.id}>\n` +
+    `Server: ${interaction.guild.name}\n\n` +
+    `${message}`
+  );
 
-        try {
-          await targetUser.send({ embeds: [dmEmbed] });
-          await sendDmLog(interaction.user.id, targetUser.id, message, true);
+  await sendDmLog(interaction.user.id, targetUser.id, message, true);
 
-          return interaction.reply({
-            content: `DM sent to <@${targetUser.id}>.`,
-            flags: MessageFlags.Ephemeral,
-          });
-        } catch (error) {
-          await sendDmLog(
-            interaction.user.id,
-            targetUser.id,
-            message,
-            false,
-            'Could not DM this user. Their DMs may be closed.'
-          );
+  return interaction.reply({
+    content: `DM sent to <@${targetUser.id}>.`,
+    flags: MessageFlags.Ephemeral,
+  });
+} catch (error) {
+  await sendDmLog(
+    interaction.user.id,
+    targetUser.id,
+    message,
+    false,
+    'Could not DM this user. Their DMs may be closed.'
+  );
 
-          return interaction.reply({
-            content: 'I could not DM that user. Their DMs may be closed.',
-            flags: MessageFlags.Ephemeral,
-          });
-        }
+  return interaction.reply({
+    content: 'I could not DM that user. Their DMs may be closed.',
+    flags: MessageFlags.Ephemeral,
+  });
+}
       }
 
       if (interaction.commandName === 'qotd-request') {
